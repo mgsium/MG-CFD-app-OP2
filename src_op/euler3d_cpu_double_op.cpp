@@ -14,7 +14,6 @@
 #include <fstream>
 #include <cmath>
 #include <string>
-#include <omp.h>
 #include <sys/time.h>
 #include <sstream>
 #include <cstdlib>
@@ -87,21 +86,19 @@ void op_par_loop_compute_flux_edge_kernel(char const *, op_set,
   op_arg,
   op_arg );
 
-void op_par_loop_compute_flux_edge_kernel_instrumented(char const *, op_set,
+void op_par_loop_unstructured_stream_kernel(char const *, op_set,
   op_arg,
   op_arg,
   op_arg,
   op_arg,
-  op_arg
-  #ifdef VERIFY_OP2_TIMING
-    , double* // compute time
-    , double* // sync time
-  #endif
-  , long* // iterations
-  #ifdef PAPI
-    , long_long*, int, int
-  #endif
-);
+  op_arg );
+
+void op_par_loop_compute_stream_loop(char const *, op_set,
+  op_arg,
+  op_arg,
+  op_arg,
+  op_arg,
+  op_arg );
 
 void op_par_loop_compute_bnd_node_flux_kernel(char const *, op_set,
   op_arg,
@@ -115,24 +112,6 @@ void op_par_loop_time_step_kernel(char const *, op_set,
   op_arg,
   op_arg,
   op_arg );
-
-void op_par_loop_unstructured_stream_kernel(char const *, op_set,
-  op_arg,
-  op_arg,
-  op_arg,
-  op_arg,
-  op_arg );
-
-void op_par_loop_unstructured_stream_kernel_instrumented(char const *, op_set,
-  op_arg,
-  op_arg,
-  op_arg,
-  op_arg,
-  op_arg
-  #ifdef PAPI
-    , long_long*, int, int
-  #endif
-);
 
 void op_par_loop_residual_kernel(char const *, op_set,
   op_arg,
@@ -215,12 +194,12 @@ void op_par_loop_count_non_zeros(char const *, op_set,
 #include "timer.h"
 
 // Global scalars:
-double smoothing_coefficient = double(0.2f);
-double ff_variable[NVAR];
-double ff_flux_contribution_momentum_x[NDIM];
-double ff_flux_contribution_momentum_y[NDIM];
-double ff_flux_contribution_momentum_z[NDIM];
-double ff_flux_contribution_density_energy[NDIM];
+float smoothing_coefficient = float(0.2f);
+float ff_variable[NVAR];
+float ff_flux_contribution_momentum_x[NDIM];
+float ff_flux_contribution_momentum_y[NDIM];
+float ff_flux_contribution_momentum_z[NDIM];
+float ff_flux_contribution_density_energy[NDIM];
 int mesh_name;
 #include "global.h"
 #ifdef PAPI
@@ -337,27 +316,27 @@ int main(int argc, char** argv)
 
     // set far field conditions
     {
-        const double angle_of_attack = double(PI / 180.0) * double(deg_angle_of_attack);
+        const float angle_of_attack = float(PI / 180.0) * float(deg_angle_of_attack);
 
-        ff_variable[VAR_DENSITY] = double(1.4);
+        ff_variable[VAR_DENSITY] = float(1.4);
 
-        double ff_pressure = double(1.0);
-        double ff_speed_of_sound = sqrt(GAMMA*ff_pressure / ff_variable[VAR_DENSITY]);
-        double ff_speed = double(ff_mach)*ff_speed_of_sound;
+        float ff_pressure = float(1.0);
+        float ff_speed_of_sound = sqrt(GAMMA*ff_pressure / ff_variable[VAR_DENSITY]);
+        float ff_speed = float(ff_mach)*ff_speed_of_sound;
 
-        double3 ff_velocity;
-        ff_velocity.x = ff_speed*double(cos((double)angle_of_attack));
-        ff_velocity.y = ff_speed*double(sin((double)angle_of_attack));
+        float3 ff_velocity;
+        ff_velocity.x = ff_speed*float(cos((float)angle_of_attack));
+        ff_velocity.y = ff_speed*float(sin((float)angle_of_attack));
         ff_velocity.z = 0.0;
 
         ff_variable[VAR_MOMENTUM+0] = ff_variable[VAR_DENSITY] * ff_velocity.x;
         ff_variable[VAR_MOMENTUM+1] = ff_variable[VAR_DENSITY] * ff_velocity.y;
         ff_variable[VAR_MOMENTUM+2] = ff_variable[VAR_DENSITY] * ff_velocity.z;
 
-        ff_variable[VAR_DENSITY_ENERGY] = ff_variable[VAR_DENSITY]*(double(0.5)*(ff_speed*ff_speed))
-                                        + (ff_pressure / double(GAMMA-1.0));
+        ff_variable[VAR_DENSITY_ENERGY] = ff_variable[VAR_DENSITY]*(float(0.5)*(ff_speed*ff_speed))
+                                        + (ff_pressure / float(GAMMA-1.0));
 
-        double3 ff_momentum;
+        float3 ff_momentum;
         ff_momentum.x = *(ff_variable+VAR_MOMENTUM+0);
         ff_momentum.y = *(ff_variable+VAR_MOMENTUM+1);
         ff_momentum.z = *(ff_variable+VAR_MOMENTUM+2);
@@ -411,12 +390,12 @@ int main(int argc, char** argv)
     // Setup OP2
     char* op_name = alloc<char>(100);
     {
-              op_decl_const2("smoothing_coefficient",1,"double",&smoothing_coefficient);
-              op_decl_const2("ff_variable",5,"double",ff_variable);
-              op_decl_const2("ff_flux_contribution_momentum_x",3,"double",ff_flux_contribution_momentum_x);
-              op_decl_const2("ff_flux_contribution_momentum_y",3,"double",ff_flux_contribution_momentum_y);
-              op_decl_const2("ff_flux_contribution_momentum_z",3,"double",ff_flux_contribution_momentum_z);
-              op_decl_const2("ff_flux_contribution_density_energy",3,"double",ff_flux_contribution_density_energy);
+              op_decl_const2("smoothing_coefficient",1,"float",&smoothing_coefficient);
+              op_decl_const2("ff_variable",5,"float",ff_variable);
+              op_decl_const2("ff_flux_contribution_momentum_x",3,"float",ff_flux_contribution_momentum_x);
+              op_decl_const2("ff_flux_contribution_momentum_y",3,"float",ff_flux_contribution_momentum_y);
+              op_decl_const2("ff_flux_contribution_momentum_z",3,"float",ff_flux_contribution_momentum_z);
+              op_decl_const2("ff_flux_contribution_density_energy",3,"float",ff_flux_contribution_density_energy);
               op_decl_const2("mesh_name",1,"int",&mesh_name);
 
         op_printf("-----------------------------------------------------\n");
@@ -476,21 +455,21 @@ int main(int argc, char** argv)
 
             sprintf(op_name, "p_volumes_L%d", i);
             if (conf.legacy_mode) {
-                p_volumes[i] = op_decl_dat_hdf5(op_nodes[i], 1, "double", layers[i].c_str(), "areas");
+                p_volumes[i] = op_decl_dat_hdf5(op_nodes[i], 1, "float", layers[i].c_str(), "areas");
                 p_volumes[i]->name = copy_str(op_name);
             }
 
             if (conf.legacy_mode) {
-                p_edge_weights[i] = op_decl_dat_hdf5(op_edges[i],         NDIM, "double", layers[i].c_str(), "edge_weights.recalculated");
+                p_edge_weights[i] = op_decl_dat_hdf5(op_edges[i],         NDIM, "float", layers[i].c_str(), "edge_weights.recalculated");
             } else {
-                p_edge_weights[i] = op_decl_dat_hdf5(op_edges[i],         NDIM, "double", layers[i].c_str(), "edge_weights");
+                p_edge_weights[i] = op_decl_dat_hdf5(op_edges[i],         NDIM, "float", layers[i].c_str(), "edge_weights");
             }
-            p_bnd_node_weights[i] = op_decl_dat_hdf5(op_bnd_nodes[i], NDIM, "double", layers[i].c_str(), "bnd_node_weights");
+            p_bnd_node_weights[i] = op_decl_dat_hdf5(op_bnd_nodes[i], NDIM, "float", layers[i].c_str(), "bnd_node_weights");
 
             if (conf.legacy_mode) {
-                p_node_coords[i] = op_decl_dat_hdf5(op_nodes[i], NDIM, "double", layers[i].c_str(), "node_coordinates.renumbered");
+                p_node_coords[i] = op_decl_dat_hdf5(op_nodes[i], NDIM, "float", layers[i].c_str(), "node_coordinates.renumbered");
             } else {
-                p_node_coords[i] = op_decl_dat_hdf5(op_nodes[i], NDIM, "double", layers[i].c_str(), "node_coordinates");
+                p_node_coords[i] = op_decl_dat_hdf5(op_nodes[i], NDIM, "float", layers[i].c_str(), "node_coordinates");
             }
 
             if (conf.validate_result) {
@@ -506,7 +485,7 @@ int main(int argc, char** argv)
                 if (access(variables_solution_filepath.c_str(), R_OK) != -1) {
                     std::string dataset_name("p_variables_result_L");
                     dataset_name += number_to_string(i);
-                    variables_correct[i] = op_decl_dat_hdf5(op_nodes[i], NVAR, "double", variables_solution_filepath.c_str(), dataset_name.c_str());
+                    variables_correct[i] = op_decl_dat_hdf5(op_nodes[i], NVAR, "float", variables_solution_filepath.c_str(), dataset_name.c_str());
                 }
                 else {
                     op_printf("Cannot find level %d solution file: %s\n", i, variables_solution_filepath.c_str());
@@ -549,31 +528,31 @@ int main(int argc, char** argv)
 
         for (int i=0; i<levels; i++) {
             sprintf(op_name, "p_variables_L%d", i);
-            p_variables[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "double", sizeof(double), op_name);
+            p_variables[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "float", sizeof(float), op_name);
             sprintf(op_name, "p_old_variables_L%d", i);
-            p_old_variables[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "double", sizeof(double), op_name);
+            p_old_variables[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "float", sizeof(float), op_name);
             sprintf(op_name, "p_residuals_L%d", i);
-            p_residuals[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "double", sizeof(double), op_name);
+            p_residuals[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "float", sizeof(float), op_name);
 
             if (!conf.legacy_mode) {
                 // Need to calculate cell volumes:
                 sprintf(op_name, "p_volumes_L%d", i);
-                p_volumes[i] = op_decl_dat_temp_char(op_nodes[i], 1, "double", sizeof(double), op_name);
+                p_volumes[i] = op_decl_dat_temp_char(op_nodes[i], 1, "float", sizeof(float), op_name);
             }
 
             sprintf(op_name, "p_step_factors_L%d", i);
-            p_step_factors[i] = op_decl_dat_temp_char(op_nodes[i], 1, "double", sizeof(double), op_name);
+            p_step_factors[i] = op_decl_dat_temp_char(op_nodes[i], 1, "float", sizeof(float), op_name);
 
             sprintf(op_name, "p_fluxes_L%d", i);
-            p_fluxes[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "double", sizeof(double), op_name);
-            if (conf.measure_mem_bound) {
+            p_fluxes[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "float", sizeof(float), op_name);
+            if (conf.measure_mem_bound || conf.measure_compute_bound) {
                 sprintf(op_name, "p_dummy_fluxes_L%d", i);
-                p_dummy_fluxes[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "double", sizeof(double), op_name);
+                p_dummy_fluxes[i] = op_decl_dat_temp_char(op_nodes[i], NVAR, "float", sizeof(double), op_name);
             }
 
             if (i > 0) {
                 sprintf(op_name, "p_up_scratch_L%d", i);
-                p_up_scratch[i] = op_decl_dat_temp_char(op_nodes[i], 1, "int", sizeof(double), op_name);
+                p_up_scratch[i] = op_decl_dat_temp_char(op_nodes[i], 1, "int", sizeof(float), op_name);
             } else {
                 p_up_scratch[i] = NULL;
             }
@@ -583,32 +562,32 @@ int main(int argc, char** argv)
     // Initialise variables:
     for (int i=0; i<levels; i++) {
         op_par_loop_initialize_variables_kernel("initialize_variables_kernel",op_nodes[i],
-                    op_arg_dat(p_variables[i],-1,OP_ID,5,"double",OP_WRITE));
+                    op_arg_dat(p_variables[i],-1,OP_ID,5,"float",OP_WRITE));
         op_par_loop_zero_5d_array_kernel("zero_5d_array_kernel",op_nodes[i],
-                    op_arg_dat(p_fluxes[i],-1,OP_ID,5,"double",OP_WRITE));
+                    op_arg_dat(p_fluxes[i],-1,OP_ID,5,"float",OP_WRITE));
         if (conf.measure_mem_bound) {
             op_par_loop_zero_5d_array_kernel("zero_5d_array_kernel",op_nodes[i],
-                        op_arg_dat(p_dummy_fluxes[i],-1,OP_ID,5,"double",OP_WRITE));
+                        op_arg_dat(p_dummy_fluxes[i],-1,OP_ID,5,"float",OP_WRITE));
         }
 
         if (!conf.legacy_mode) {
             op_par_loop_zero_1d_array_kernel("zero_1d_array_kernel",op_nodes[i],
-                        op_arg_dat(p_volumes[i],-1,OP_ID,1,"double",OP_WRITE));
+                        op_arg_dat(p_volumes[i],-1,OP_ID,1,"float",OP_WRITE));
             op_par_loop_calculate_cell_volumes("calculate_cell_volumes",op_edges[i],
-                        op_arg_dat(p_node_coords[i],0,p_edge_to_nodes[i],3,"double",OP_READ),
-                        op_arg_dat(p_node_coords[i],1,p_edge_to_nodes[i],3,"double",OP_READ),
-                        op_arg_dat(p_edge_weights[i],-1,OP_ID,3,"double",OP_RW),
-                        op_arg_dat(p_volumes[i],0,p_edge_to_nodes[i],1,"double",OP_INC),
-                        op_arg_dat(p_volumes[i],1,p_edge_to_nodes[i],1,"double",OP_INC));
+                        op_arg_dat(p_node_coords[i],0,p_edge_to_nodes[i],3,"float",OP_READ),
+                        op_arg_dat(p_node_coords[i],1,p_edge_to_nodes[i],3,"float",OP_READ),
+                        op_arg_dat(p_edge_weights[i],-1,OP_ID,3,"float",OP_RW),
+                        op_arg_dat(p_volumes[i],0,p_edge_to_nodes[i],1,"float",OP_INC),
+                        op_arg_dat(p_volumes[i],1,p_edge_to_nodes[i],1,"float",OP_INC));
         }
     }
 
     // Fudge the weights to delay occurrence of negative densities in HDF5 meshes:
     for (int l=0; l<levels; l++) {
         op_par_loop_dampen_ewt("dampen_ewt",op_edges[l],
-                    op_arg_dat(p_edge_weights[l],-1,OP_ID,3,"double",OP_INC));
+                    op_arg_dat(p_edge_weights[l],-1,OP_ID,3,"float",OP_INC));
         op_par_loop_dampen_ewt("dampen_ewt",op_bnd_nodes[l],
-                    op_arg_dat(p_bnd_node_weights[l],-1,OP_ID,3,"double",OP_INC));
+                    op_arg_dat(p_bnd_node_weights[l],-1,OP_ID,3,"float",OP_INC));
     }
 
     char* h5_out_name = alloc<char>(100);
@@ -623,9 +602,9 @@ int main(int argc, char** argv)
     int level = 0;
     int mg_dir = MG_UP;
     int i = 0;
-    double rms = 0.0;
+    float rms = 0.0;
     int bad_val_count = 0;
-    double min_dt = std::numeric_limits<double>::max();
+    float min_dt = std::numeric_limits<float>::max();
     while(i < conf.num_cycles)
     {
         #ifdef LOG_PROGRESS
@@ -636,28 +615,28 @@ int main(int argc, char** argv)
         #endif
 
         op_par_loop_copy_double_kernel("copy_double_kernel",op_nodes[level],
-                    op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_READ),
-                    op_arg_dat(p_old_variables[level],-1,OP_ID,5,"double",OP_WRITE));
+                    op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_READ),
+                    op_arg_dat(p_old_variables[level],-1,OP_ID,5,"float",OP_WRITE));
 
         // for the first iteration we compute the time step
         op_par_loop_calculate_dt_kernel("calculate_dt_kernel",op_nodes[level],
-                    op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_READ),
-                    op_arg_dat(p_volumes[level],-1,OP_ID,1,"double",OP_READ),
-                    op_arg_dat(p_step_factors[level],-1,OP_ID,1,"double",OP_WRITE));
-        min_dt = std::numeric_limits<double>::max();
+                    op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_READ),
+                    op_arg_dat(p_volumes[level],-1,OP_ID,1,"float",OP_READ),
+                    op_arg_dat(p_step_factors[level],-1,OP_ID,1,"float",OP_WRITE));
+        min_dt = std::numeric_limits<float>::max();
         op_par_loop_get_min_dt_kernel("get_min_dt_kernel",op_nodes[level],
-                    op_arg_dat(p_step_factors[level],-1,OP_ID,1,"double",OP_READ),
-                    op_arg_gbl(&min_dt,1,"double",OP_MIN));
+                    op_arg_dat(p_step_factors[level],-1,OP_ID,1,"float",OP_READ),
+                    op_arg_gbl(&min_dt,1,"float",OP_MIN));
         if (min_dt < 0.0f) {
           op_printf("Fatal error during 'step factor' calculation, min_dt = %.5e\n", min_dt);
           op_exit();
           return 1;
         }
         op_par_loop_compute_step_factor_kernel("compute_step_factor_kernel",op_nodes[level],
-                    op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_READ),
-                    op_arg_dat(p_volumes[level],-1,OP_ID,1,"double",OP_READ),
-                    op_arg_gbl(&min_dt,1,"double",OP_READ),
-                    op_arg_dat(p_step_factors[level],-1,OP_ID,1,"double",OP_WRITE));
+                    op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_READ),
+                    op_arg_dat(p_volumes[level],-1,OP_ID,1,"float",OP_READ),
+                    op_arg_gbl(&min_dt,1,"float",OP_READ),
+                    op_arg_dat(p_step_factors[level],-1,OP_ID,1,"float",OP_WRITE));
 
         int rkCycle;
         for (rkCycle=0; rkCycle<RK; rkCycle++)
@@ -666,58 +645,54 @@ int main(int argc, char** argv)
                 op_printf(" RK cycle %d / %d\n", rkCycle+1, RK);
             #endif
 
-            op_par_loop_compute_flux_edge_kernel_instrumented("compute_flux_edge_kernel",op_edges[level],
-                        op_arg_dat(p_variables[level],0,p_edge_to_nodes[level],5,"double",OP_READ),
-                        op_arg_dat(p_variables[level],1,p_edge_to_nodes[level],5,"double",OP_READ),
-                        op_arg_dat(p_edge_weights[level],-1,OP_ID,3,"double",OP_READ),
-                        op_arg_dat(p_fluxes[level],0,p_edge_to_nodes[level],5,"double",OP_INC),
-                        op_arg_dat(p_fluxes[level],1,p_edge_to_nodes[level],5,"double",OP_INC)
-                        #ifdef VERIFY_OP2_TIMING
-                          , &flux_kernel_compute_times[level], &flux_kernel_sync_times[level]
-                        #endif
-                        , &flux_kernel_iter_counts[level]
-                        #ifdef PAPI
-                        , &flux_kernel_event_counts[level*num_events], event_set, num_events
-                        #endif
-                        );
+            op_par_loop_compute_flux_edge_kernel("compute_flux_edge_kernel",op_edges[level],
+                        op_arg_dat(p_variables[level],0,p_edge_to_nodes[level],5,"float",OP_READ),
+                        op_arg_dat(p_variables[level],1,p_edge_to_nodes[level],5,"float",OP_READ),
+                        op_arg_dat(p_edge_weights[level],-1,OP_ID,3,"float",OP_READ),
+                        op_arg_dat(p_fluxes[level],0,p_edge_to_nodes[level],5,"float",OP_INC),
+                        op_arg_dat(p_fluxes[level],1,p_edge_to_nodes[level],5,"float",OP_INC));
+
+            if (conf.measure_mem_bound) {
+                op_par_loop_unstructured_stream_kernel("unstructured_stream_kernel",op_edges[level],
+                            op_arg_dat(p_variables[level],0,p_edge_to_nodes[level],5,"float",OP_READ),
+                            op_arg_dat(p_variables[level],1,p_edge_to_nodes[level],5,"float",OP_READ),
+                            op_arg_dat(p_edge_weights[level],-1,OP_ID,3,"float",OP_READ),
+                            op_arg_dat(p_dummy_fluxes[level],0,p_edge_to_nodes[level],5,"float",OP_INC),
+                            op_arg_dat(p_dummy_fluxes[level],1,p_edge_to_nodes[level],5,"float",OP_INC));
+            }
+            if (conf.measure_compute_bound) {
+                op_par_loop_compute_stream_loop("compute_stream_loop",op_edges[level],
+                            op_arg_dat(p_variables[level],0,p_edge_to_nodes[level],5,"float",OP_READ),
+                            op_arg_dat(p_variables[level],1,p_edge_to_nodes[level],5,"float",OP_READ),
+                            op_arg_dat(p_edge_weights[level],-1,OP_ID,3,"float",OP_READ),
+                            op_arg_dat(p_dummy_fluxes[level],0,p_edge_to_nodes[level],5,"float",OP_INC),
+                            op_arg_dat(p_dummy_fluxes[level],1,p_edge_to_nodes[level],5,"float",OP_INC));
+            }
 
             op_par_loop_compute_bnd_node_flux_kernel("compute_bnd_node_flux_kernel",op_bnd_nodes[level],
                         op_arg_dat(p_bnd_node_groups[level],-1,OP_ID,1,"int",OP_READ),
-                        op_arg_dat(p_bnd_node_weights[level],-1,OP_ID,3,"double",OP_READ),
-                        op_arg_dat(p_variables[level],0,p_bnd_node_to_node[level],5,"double",OP_READ),
-                        op_arg_dat(p_fluxes[level],0,p_bnd_node_to_node[level],5,"double",OP_INC));
+                        op_arg_dat(p_bnd_node_weights[level],-1,OP_ID,3,"float",OP_READ),
+                        op_arg_dat(p_variables[level],0,p_bnd_node_to_node[level],5,"float",OP_READ),
+                        op_arg_dat(p_fluxes[level],0,p_bnd_node_to_node[level],5,"float",OP_INC));
 
             op_par_loop_time_step_kernel("time_step_kernel",op_nodes[level],
                         op_arg_gbl(&rkCycle,1,"int",OP_READ),
-                        op_arg_dat(p_step_factors[level],-1,OP_ID,1,"double",OP_READ),
-                        op_arg_dat(p_fluxes[level],-1,OP_ID,5,"double",OP_INC),
-                        op_arg_dat(p_old_variables[level],-1,OP_ID,5,"double",OP_READ),
-                        op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_WRITE));
-
-            if (conf.measure_mem_bound) {
-                op_par_loop_unstructured_stream_kernel_instrumented("unstructured_stream_kernel",op_edges[level],
-                            op_arg_dat(p_variables[level],0,p_edge_to_nodes[level],5,"double",OP_READ),
-                            op_arg_dat(p_variables[level],1,p_edge_to_nodes[level],5,"double",OP_READ),
-                            op_arg_dat(p_edge_weights[level],-1,OP_ID,3,"double",OP_READ),
-                            op_arg_dat(p_dummy_fluxes[level],0,p_edge_to_nodes[level],5,"double",OP_INC),
-                            op_arg_dat(p_dummy_fluxes[level],1,p_edge_to_nodes[level],5,"double",OP_INC)
-                            #ifdef PAPI
-                            , &ustream_kernel_event_counts[level*num_events], event_set, num_events
-                            #endif
-                            );
-            }
+                        op_arg_dat(p_step_factors[level],-1,OP_ID,1,"float",OP_READ),
+                        op_arg_dat(p_fluxes[level],-1,OP_ID,5,"float",OP_INC),
+                        op_arg_dat(p_old_variables[level],-1,OP_ID,5,"float",OP_READ),
+                        op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_WRITE));
         }
 
         op_par_loop_residual_kernel("residual_kernel",op_nodes[level],
-                    op_arg_dat(p_old_variables[level],-1,OP_ID,5,"double",OP_READ),
-                    op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_READ),
-                    op_arg_dat(p_residuals[level],-1,OP_ID,5,"double",OP_WRITE));
+                    op_arg_dat(p_old_variables[level],-1,OP_ID,5,"float",OP_READ),
+                    op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_READ),
+                    op_arg_dat(p_residuals[level],-1,OP_ID,5,"float",OP_WRITE));
         if (level == 0) {
             rms = 0.0;
             op_par_loop_calc_rms_kernel("calc_rms_kernel",op_nodes[level],
-                        op_arg_dat(p_residuals[level],-1,OP_ID,5,"double",OP_READ),
-                        op_arg_gbl(&rms,1,"double",OP_INC));
-            rms = sqrt(rms / double(op_get_size(op_nodes[level])));
+                        op_arg_dat(p_residuals[level],-1,OP_ID,5,"float",OP_READ),
+                        op_arg_gbl(&rms,1,"float",OP_INC));
+            rms = sqrt(rms / float(op_get_size(op_nodes[level])));
             // op_printf(" (RMS = %.3e)", rms);
             // Until I get the HDF5 meshes working correctly, no point displaying incorrect RMS.
 
@@ -725,7 +700,7 @@ int main(int argc, char** argv)
               // count_bad_vals() invokes isnan(), unsupported with OpenACC.
             #else
                 op_par_loop_count_bad_vals("count_bad_vals",op_nodes[level],
-                            op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_READ),
+                            op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_READ),
                             op_arg_gbl(&bad_val_count,1,"int",OP_INC));
             #endif
             if (bad_val_count > 0) {
@@ -766,16 +741,16 @@ int main(int argc, char** argv)
                 level++;
 
                 op_par_loop_up_pre_kernel("up_pre_kernel",op_nodes[level-1],
-                            op_arg_dat(p_variables[level],0,p_node_to_mg_node[level-1],5,"double",OP_WRITE),
+                            op_arg_dat(p_variables[level],0,p_node_to_mg_node[level-1],5,"float",OP_WRITE),
                             op_arg_dat(p_up_scratch[level],0,p_node_to_mg_node[level-1],1,"int",OP_WRITE));
 
                 op_par_loop_up_kernel("up_kernel",op_nodes[level-1],
-                            op_arg_dat(p_variables[level-1],-1,OP_ID,5,"double",OP_READ),
-                            op_arg_dat(p_variables[level],0,p_node_to_mg_node[level-1],5,"double",OP_INC),
+                            op_arg_dat(p_variables[level-1],-1,OP_ID,5,"float",OP_READ),
+                            op_arg_dat(p_variables[level],0,p_node_to_mg_node[level-1],5,"float",OP_INC),
                             op_arg_dat(p_up_scratch[level],0,p_node_to_mg_node[level-1],1,"int",OP_INC));
 
                 op_par_loop_up_post_kernel("up_post_kernel",op_nodes[level],
-                            op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_INC),
+                            op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_INC),
                             op_arg_dat(p_up_scratch[level],-1,OP_ID,1,"int",OP_READ));
 
                 if(level == levels-1)
@@ -791,31 +766,31 @@ int main(int argc, char** argv)
                     // NOTE: Because I have not yet generated the mapping 'p_edge_to_mg_nodes', I have not 
                     // tested these 'down_v2_kernel' loops at all. I have simply ported it from MG-CFD-app-plain
                     op_par_loop_down_v2_kernel_pre("down_v2_kernel_pre",op_nodes[level],
-                                op_arg_dat(p_residuals_prolonged[level],-1,OP_ID,5,"double",OP_WRITE),
-                                op_arg_dat(p_residuals_prolonged_wsum[level],-1,OP_ID,1,"double",OP_WRITE));
+                                op_arg_dat(p_residuals_prolonged[level],-1,OP_ID,5,"float",OP_WRITE),
+                                op_arg_dat(p_residuals_prolonged_wsum[level],-1,OP_ID,1,"float",OP_WRITE));
                     op_par_loop_down_v2_kernel("down_v2_kernel",op_edges[level],
-                                op_arg_dat(p_node_coords[level],0,p_edge_to_nodes[level],3,"double",OP_READ),
-                                op_arg_dat(p_node_coords[level],1,p_edge_to_nodes[level],3,"double",OP_READ),
-                                op_arg_dat(p_node_coords[level+1],0,p_edge_to_mg_nodes[level],3,"double",OP_READ),
-                                op_arg_dat(p_node_coords[level+1],1,p_edge_to_mg_nodes[level],3,"double",OP_READ),
-                                op_arg_dat(p_residuals[level+1],0,p_edge_to_mg_nodes[level],5,"double",OP_READ),
-                                op_arg_dat(p_residuals[level+1],1,p_edge_to_mg_nodes[level],5,"double",OP_READ),
-                                op_arg_dat(p_residuals_prolonged[level],0,p_edge_to_nodes[level],5,"double",OP_INC),
-                                op_arg_dat(p_residuals_prolonged[level],1,p_edge_to_nodes[level],5,"double",OP_INC),
-                                op_arg_dat(p_residuals_prolonged_wsum[level],0,p_edge_to_nodes[level],1,"double",OP_INC),
-                                op_arg_dat(p_residuals_prolonged_wsum[level],1,p_edge_to_nodes[level],1,"double",OP_INC));
+                                op_arg_dat(p_node_coords[level],0,p_edge_to_nodes[level],3,"float",OP_READ),
+                                op_arg_dat(p_node_coords[level],1,p_edge_to_nodes[level],3,"float",OP_READ),
+                                op_arg_dat(p_node_coords[level+1],0,p_edge_to_mg_nodes[level],3,"float",OP_READ),
+                                op_arg_dat(p_node_coords[level+1],1,p_edge_to_mg_nodes[level],3,"float",OP_READ),
+                                op_arg_dat(p_residuals[level+1],0,p_edge_to_mg_nodes[level],5,"float",OP_READ),
+                                op_arg_dat(p_residuals[level+1],1,p_edge_to_mg_nodes[level],5,"float",OP_READ),
+                                op_arg_dat(p_residuals_prolonged[level],0,p_edge_to_nodes[level],5,"float",OP_INC),
+                                op_arg_dat(p_residuals_prolonged[level],1,p_edge_to_nodes[level],5,"float",OP_INC),
+                                op_arg_dat(p_residuals_prolonged_wsum[level],0,p_edge_to_nodes[level],1,"float",OP_INC),
+                                op_arg_dat(p_residuals_prolonged_wsum[level],1,p_edge_to_nodes[level],1,"float",OP_INC));
                     op_par_loop_down_v2_kernel_post("down_v2_kernel_post",op_nodes[level],
-                                op_arg_dat(p_residuals_prolonged[level],-1,OP_ID,5,"double",OP_READ),
-                                op_arg_dat(p_residuals_prolonged_wsum[level],-1,OP_ID,1,"double",OP_READ),
-                                op_arg_dat(p_residuals[level],-1,OP_ID,5,"double",OP_READ),
-                                op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_INC));
+                                op_arg_dat(p_residuals_prolonged[level],-1,OP_ID,5,"float",OP_READ),
+                                op_arg_dat(p_residuals_prolonged_wsum[level],-1,OP_ID,1,"float",OP_READ),
+                                op_arg_dat(p_residuals[level],-1,OP_ID,5,"float",OP_READ),
+                                op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_INC));
                 } else {
                     op_par_loop_down_kernel("down_kernel",op_nodes[level],
-                                op_arg_dat(p_variables[level],-1,OP_ID,5,"double",OP_INC),
-                                op_arg_dat(p_residuals[level],-1,OP_ID,5,"double",OP_READ),
-                                op_arg_dat(p_node_coords[level],-1,OP_ID,3,"double",OP_READ),
-                                op_arg_dat(p_residuals[level+1],0,p_node_to_mg_node[level],5,"double",OP_READ),
-                                op_arg_dat(p_node_coords[level+1],0,p_node_to_mg_node[level],3,"double",OP_READ));
+                                op_arg_dat(p_variables[level],-1,OP_ID,5,"float",OP_INC),
+                                op_arg_dat(p_residuals[level],-1,OP_ID,5,"float",OP_READ),
+                                op_arg_dat(p_node_coords[level],-1,OP_ID,3,"float",OP_READ),
+                                op_arg_dat(p_residuals[level+1],0,p_node_to_mg_node[level],5,"float",OP_READ),
+                                op_arg_dat(p_node_coords[level+1],0,p_node_to_mg_node[level],3,"float",OP_READ));
                 }
 
                 if(level == 0)
@@ -850,7 +825,7 @@ int main(int argc, char** argv)
         for (int l=0; l<levels; l++) {
             int bad_val_count = 0;
             op_par_loop_count_bad_vals("count_bad_vals",op_nodes[l],
-                        op_arg_dat(p_variables[l],-1,OP_ID,5,"double",OP_READ),
+                        op_arg_dat(p_variables[l],-1,OP_ID,5,"float",OP_READ),
                         op_arg_gbl(&bad_val_count,1,"int",OP_INC));
             if (bad_val_count > 0) {
                 value_check_failed = true;
@@ -872,16 +847,16 @@ int main(int argc, char** argv)
                 }
 
                 sprintf(op_name, "p_var_diff_L%d", l);
-                op_dat variables_difference = op_decl_dat_temp_char(op_nodes[l], NVAR, "double", sizeof(double), op_name);
+                op_dat variables_difference = op_decl_dat_temp_char(op_nodes[l], NVAR, "float", sizeof(float), op_name);
 
                 op_par_loop_identify_differences("identify_differences",op_nodes[l],
-                            op_arg_dat(p_variables[l],-1,OP_ID,5,"double",OP_READ),
-                            op_arg_dat(variables_correct[l],-1,OP_ID,5,"double",OP_READ),
-                            op_arg_dat(variables_difference,-1,OP_ID,5,"double",OP_WRITE));
+                            op_arg_dat(p_variables[l],-1,OP_ID,5,"float",OP_READ),
+                            op_arg_dat(variables_correct[l],-1,OP_ID,5,"float",OP_READ),
+                            op_arg_dat(variables_difference,-1,OP_ID,5,"float",OP_WRITE));
 
                 int count = 0;
                 op_par_loop_count_non_zeros("count_non_zeros",op_nodes[l],
-                            op_arg_dat(variables_difference,-1,OP_ID,5,"double",OP_READ),
+                            op_arg_dat(variables_difference,-1,OP_ID,5,"float",OP_READ),
                             op_arg_gbl(&count,1,"int",OP_INC));
                 // Tolerate a tiny number of differences (as false positives):
                 int threshold = op_get_size(op_nodes[l]) / 5000;
@@ -976,7 +951,6 @@ int main(int argc, char** argv)
             num_events, 
             events, 
             flux_kernel_event_counts, 
-            ustream_kernel_event_counts,
             conf.output_file_prefix);
     #endif
 
